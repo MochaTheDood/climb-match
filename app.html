@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClimbMatch - Find Your Climbing Buddy</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        /* Morandi color palette */
+        :root {
+            --morandi-yellow: #E6D5B8;
+            --morandi-green: #9CAF88;
+            --morandi-skin: #E8C4B8;
+            --morandi-blue: #A8C5D6;
+            --morandi-gray: #B8B8B8;
+            --morandi-dark: #6B6B6B;
+        }
+        
+        body {
+            background-color: #FAF8F5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .morandi-yellow { background-color: var(--morandi-yellow); }
+        .morandi-green { background-color: var(--morandi-green); }
+        .morandi-skin { background-color: var(--morandi-skin); }
+        .morandi-blue { background-color: var(--morandi-blue); }
+        
+        /* Monument Valley inspired geometric elements */
+        .geometric-shape {
+            position: absolute;
+            opacity: 0.1;
+            pointer-events: none;
+        }
+        
+        .triangle {
+            width: 0;
+            height: 0;
+            border-left: 50px solid transparent;
+            border-right: 50px solid transparent;
+            border-bottom: 100px solid var(--morandi-green);
+        }
+        
+        .circle {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: var(--morandi-yellow);
+        }
+        
+        /* Clean geometric logo */
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 24px;
+            color: var(--morandi-dark);
+        }
+        
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--morandi-green) 0%, var(--morandi-blue) 100%);
+            clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+        }
+        
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        /* Custom time slot styles */
+        .time-slot {
+            transition: all 0.2s ease;
+            border: 2px solid transparent;
+        }
+        
+        .time-slot:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .time-slot.selected {
+            border-color: var(--morandi-green);
+            background-color: var(--morandi-yellow);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Initialize Supabase - REPLACE THESE WITH YOUR ACTUAL VALUES
+        const SUPABASE_URL = https://wggyaqxmmhijastqbtud.supabase.co;
+        const SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndnZ3lhcXhtbWhpamFzdHFidHVkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIzNjA4MjUsImV4cCI6MjA2NzkzNjgyNX0.LtvMYHj8r_oM6YTiwcUqqw4siNZAFc3HKVhPJJ2OdBY;
+        
+        const { createClient } = supabase;
+        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        const { useState, useEffect, useRef } = React;
+        
+        // Main App Component
+        function App() {
+            const [currentScreen, setCurrentScreen] = useState('landing');
+            const [climbingPreference, setClimbingPreference] = useState('');
+            const [selectedTimeSlots, setSelectedTimeSlots] = useState({});
+            const [matches, setMatches] = useState([]);
+            const [user, setUser] = useState(null);
+            const [selectedMatch, setSelectedMatch] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            
+            // Get current date based on time
+            const getStartDate = () => {
+                const now = new Date();
+                const hour = now.getHours();
+                if (hour >= 18) {
+                    now.setDate(now.getDate() + 1);
+                }
+                return now;
+            };
+            
+            // Generate next 3 days
+            const generateDays = () => {
+                const days = [];
+                const startDate = getStartDate();
+                for (let i = 0; i < 3; i++) {
+                    const date = new Date(startDate);
+                    date.setDate(date.getDate() + i);
+                    days.push(date);
+                }
+                return days;
+            };
+            
+            // Format date for display
+            const formatDate = (date) => {
+                const options = { weekday: 'short', month: 'short', day: 'numeric' };
+                return date.toLocaleDateString('en-US', options);
+            };
+            
+            // Generate time slots (1-hour blocks from 6am to 10pm)
+            const generateTimeSlots = () => {
+                const slots = [];
+                for (let hour = 6; hour < 22; hour++) {
+                    const start = `${hour}:00`;
+                    const end = `${hour + 1}:00`;
+                    slots.push({ start, end, display: `${hour % 12 || 12}${hour < 12 ? 'am' : 'pm'} - ${(hour + 1) % 12 || 12}${hour + 1 < 12 ? 'am' : 'pm'}` });
+                }
+                return slots;
+            };
+            
+            // Landing Screen
+            const LandingScreen = () => (
+                <div className="min-h-screen p-4 fade-in">
+                    <div className="geometric-shape triangle" style={{ top: '10%', right: '15%' }}></div>
+                    <div className="geometric-shape circle" style={{ bottom: '20%', left: '10%' }}></div>
+                    
+                    <div className="max-w-md mx-auto pt-8">
+                        <div className="logo justify-center mb-8">
+                            <div className="logo-icon"></div>
+                            <span>ClimbMatch</span>
+                        </div>
+                        
+                        <h1 className="text-3xl font-bold text-center mb-2" style={{ color: 'var(--morandi-dark)' }}>
+                            Find your climbing buddy
+                        </h1>
+                        
+                        <p className="text-center mb-8" style={{ color: 'var(--morandi-gray)' }}>
+                            12 climbers available this week
+                        </p>
+                        
+                        <div className="bg-white rounded-2xl p-6 shadow-lg">
+                            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--morandi-dark)' }}>
+                                What type of climbing partner are you looking for?
+                            </h2>
+                            
+                            <div className="space-y-3">
+                                {['Top Rope', 'Lead', 'Open to both'].map((option) => (
+                                    <label key={option} className="flex items-center p-4 rounded-lg border-2 cursor-pointer transition-all hover:border-gray-300"
+                                        style={{ 
+                                            borderColor: climbingPreference === option ? 'var(--morandi-green)' : '#E5E5E5',
+                                            backgroundColor: climbingPreference === option ? 'var(--morandi-yellow)' : 'white'
+                                        }}>
+                                        <input
+                                            type="radio"
+                                            name="climbing"
+                                            value={option}
+                                            checked={climbingPreference === option}
+                                            onChange={(e) => setClimbingPreference(e.target.value)}
+                                            className="sr-only"
+                                        />
+                                        <div className="flex items-center justify-between w-full">
+                                            <span className="font-medium">{option}</span>
+                                            {climbingPreference === option && (
+                                                <svg className="w-5 h-5" style={{ color: 'var(--morandi-green)' }} fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                </svg>
+                                            )}
+                                        </div>
+                                    </label>
+                                ))}
+                            </div>
+                            
+                            <button
+                                onClick={() => climbingPreference && setCurrentScreen('timeSelection')}
+                                disabled={!climbingPreference}
+                                className={`w-full mt-6 py-3 rounded-lg font-semibold transition-all ${
+                                    climbingPreference 
+                                        ? 'text-white hover:opacity-90' 
+                                        : 'text-gray-400 cursor-not-allowed'
+                                }`}
+                                style={{ 
+                                    backgroundColor: climbingPreference ? 'var(--morandi-green)' : '#E5E5E5' 
+                                }}
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+            
+            // Time Selection Screen
+            const TimeSelectionScreen = () => {
+                const days = generateDays();
+                const timeSlots = generateTimeSlots();
+                
+                const toggleTimeSlot = (day, slot) => {
+                    const dayKey = formatDate(day);
+                    setSelectedTimeSlots(prev => {
+                        const daySlots = prev[dayKey] || [];
+                        const slotKey = `${slot.start}-${slot.end}`;
+                        
+                        if (daySlots.includes(slotKey)) {
+                            return {
+                                ...prev,
+                                [dayKey]: daySlots.filter(s => s !== slotKey)
+                            };
+                        } else {
+                            return {
+                                ...prev,
+                                [dayKey]: [...daySlots, slotKey]
+                            };
+                        }
+                    });
+                };
+                
+                const hasSelectedSlots = Object.values(selectedTimeSlots).some(slots => slots.length > 0);
+                
+                return (
+                    <div className="min-h-screen p-4 fade-in">
+                        <div className="max-w-4xl mx-auto pt-8">
+                            <button
+                                onClick={() => setCurrentScreen('landing')}
+                                className="mb-4 text-gray-600 hover:text-gray-800 flex items-center gap-2"
+                            >
+                                ← Back
+                            </button>
+                            
+                            <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--morandi-dark)' }}>
+                                When do you want to climb?
+                            </h2>
+                            <p className="mb-6" style={{ color: 'var(--morandi-gray)' }}>
+                                Select your preferred times for the next 3 days
+                            </p>
+                            
+                            <div className="space-y-6">
+                                {days.map((day, dayIndex) => {
+                                    const dayKey = formatDate(day);
+                                    const daySlots = selectedTimeSlots[dayKey] || [];
+                                    
+                                    return (
+                                        <div key={dayIndex} className="bg-white rounded-2xl p-6 shadow-lg">
+                                            <h3 className="font-semibold text-lg mb-4" style={{ color: 'var(--morandi-dark)' }}>
+                                                {formatDate(day)}
+                                            </h3>
+                                            
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                                {timeSlots.map((slot, slotIndex) => {
+                                                    const slotKey = `${slot.start}-${slot.end}`;
+                                                    const isSelected = daySlots.includes(slotKey);
+                                                    
+                                                    return (
+                                                        <button
+                                                            key={slotIndex}
+                                                            onClick={() => toggleTimeSlot(day, slot)}
+                                                            className={`time-slot p-3 rounded-lg text-sm font-medium ${
+                                                                isSelected ? 'selected' : 'bg-gray-50 hover:bg-gray-100'
+                                                            }`}
+                                                        >
+                                                            {slot.display}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            
+                            <div className="mt-8 flex gap-4">
+                                <button
+                                    onClick={() => setCurrentScreen('findingMatches')}
+                                    className="flex-1 py-3 rounded-lg font-semibold text-gray-600 bg-gray-200 hover:bg-gray-300 transition-all"
+                                >
+                                    Skip
+                                </button>
+                                
+                                <button
+                                    onClick={() => hasSelectedSlots && setCurrentScreen('findingMatches')}
+                                    disabled={!hasSelectedSlots}
+                                    className={`flex-1 py-3 rounded-lg font-semibold transition-all text-white ${
+                                        hasSelectedSlots 
+                                            ? 'hover:opacity-90' 
+                                            : 'opacity-50 cursor-not-allowed'
+                                    }`}
+                                    style={{ 
+                                        backgroundColor: 'var(--morandi-green)'
+                                    }}
+                                >
+                                    Find Matches
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+            
+            // Finding Matches Screen (simulated for now)
+            const FindingMatchesScreen = () => {
+                useEffect(() => {
+                    // Simulate finding matches
+                    setTimeout(() => {
+                        // Mock matches for demonstration
+                        const mockMatches = [
+                            {
+                                id: 1,
+                                username: 'AlexClimber',
+                                climbingPreference: 'Top Rope',
+                                overlapTime: 'Mon 2-3pm',
+                                matchType: 'full',
+                                bio: 'Love climbing and making new friends!'
+                            },
+                            {
+                                id: 2,
+                                username: 'SarahBeta',
+                                climbingPreference: 'Open to both',
+                                overlapTime: 'Tue 10-11am',
+                                matchType: 'partial',
+                                bio: 'Getting back into climbing after a break'
+                            }
+                        ];
+                        
+                        setMatches(mockMatches);
+                        setCurrentScreen('matchResults');
+                    }, 2000);
+                }, []);
+                
+                return (
+                    <div className="min-h-screen p-4 flex items-center justify-center fade-in">
+                        <div className="text-center">
+                            <div className="w-16 h-16 mx-auto mb-4 rounded-full animate-pulse" style={{ backgroundColor: 'var(--morandi-green)' }}></div>
+                            <h2 className="text-xl font-semibold" style={{ color: 'var(--morandi-dark)' }}>
+                                Finding your climbing partners...
+                            </h2>
+                        </div>
+                    </div>
+                );
+            };
+            
+            // Match Results Screen
+            const MatchResultsScreen = () => {
+                if (matches.length === 0) {
+                    return (
+                        <div className="min-h-screen p-4 fade-in">
+                            <div className="max-w-md mx-auto pt-8 text-center">
+                                <div className="bg-white rounded-2xl p-8 shadow-lg">
+                                    <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--morandi-dark)' }}>
+                                        No matches found yet
+                                    </h2>
+                                    <p className="mb-6" style={{ color: 'var(--morandi-gray)' }}>
+                                        Create a profile and we'll notify you when someone shares your availability!
+                                    </p>
+                                    <button
+                                        onClick={() => setCurrentScreen('createProfile')}
+                                        className="w-full py-3 rounded-lg font-semibold text-white transition-all hover:opacity-90"
+                                        style={{ backgroundColor: 'var(--morandi-green)' }}
+                                    >
+                                        Create profile to get notified
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                }
+                
+                return (
+                    <div className="min-h-screen p-4 fade-in">
+                        <div className="max-w-md mx-auto pt-8">
+                            <h2 className="text-2xl font-bold mb-6" style={{ color: 'var(--morandi-dark)' }}>
+                                These climbers share your availability
+                            </h2>
+                            
+                            <div className="space-y-4">
+                                {matches.map((match) => (
+                                    <div key={match.id} className="bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all cursor-pointer"
+                                        onClick={() => {
+                                            setSelectedMatch(match);
+                                            setCurrentScreen('createProfile');
+                                        }}>
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div>
+                                                <h3 className="font-semibold text-lg">{match.username}</h3>
+                                                <span className="inline-block px-3 py-1 rounded-full text-sm mt-1"
+                                                    style={{ 
+                                                        backgroundColor: match.climbingPreference === 'Top Rope' ? 'var(--morandi-yellow)' :
+                                                                       match.climbingPreference === 'Lead' ? 'var(--morandi-blue)' :
+                                                                       'var(--morandi-green)',
+                                                        color: 'var(--morandi-dark)'
+                                                    }}>
+                                                    {match.climbingPreference}
+                                                </span>
+                                            </div>
+                                            <span className={`text-sm font-medium ${match.matchType === 'full' ? 'text-green-600' : 'text-orange-600'}`}>
+                                                {match.matchType === 'full' ? 'Full match' : 'Partial match'}
+                                            </span>
+                                        </div>
+                                        
+                                        <p className="text-sm mb-3" style={{ color: 'var(--morandi-gray)' }}>
+                                            {match.bio}
+                                        </p>
+                                        
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm font-medium" style={{ color: 'var(--morandi-dark)' }}>
+                                                📅 {match.overlapTime}
+                                            </span>
+                                            <span className="text-sm" style={{ color: 'var(--morandi-green)' }}>
+                                                Select to connect →
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            <p className="mt-6 text-sm text-center" style={{ color: 'var(--morandi-gray)' }}>
+                                Select one partner - they have 60 minutes to confirm. This prevents double booking.
+                            </p>
+                        </div>
+                    </div>
+                );
+            };
+            
+            // Create Profile Screen
+            const CreateProfileScreen = () => {
+                const [email, setEmail] = useState('');
+                const [username, setUsername] = useState('');
+                const [bio, setBio] = useState('');
+                const [profileClimbingPref, setProfileClimbingPref] = useState(climbingPreference);
+                
+                const handleCreateProfile = async (e) => {
+                    e.preventDefault();
+                    setLoading(true);
+                    setError('');
+                    
+                    try {
+                        // Here you would normally create the user in Supabase
+                        // For demo purposes, we'll simulate success
+                        setUser({ email, username, bio, climbingPreference: profileClimbingPref });
+                        setCurrentScreen('requestSent');
+                    } catch (err) {
+                        setError('Failed to create profile. Please try again.');
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                
+                return (
+                    <div className="min-h-screen p-4 fade-in">
+                        <div className="max-w-md mx-auto pt-8">
+                            <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--morandi-dark)' }}>
+                                One more step to connect with {selectedMatch?.username || 'climbers'}
+                            </h2>
+                            <p className="mb-6" style={{ color: 'var(--morandi-gray)' }}>
+                                Create your profile to start matching
+                            </p>
+                            
+                            <form onSubmit={handleCreateProfile} className="bg-white rounded-2xl p-6 shadow-lg">
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2" style={{ color: 'var(--morandi-dark)' }}>
+                                            Email
+                                        </label>
+                                        <input
+                                            type="email"
+                                            required
+                                            value={email}
+                                            onChange={(e) => setEmail(e.target.value)}
+                                            className="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-green-400 focus:outline-none"
+                                            placeholder="your@email.com"
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2" style={{ color: 'var(--morandi-dark)' }}>
+                                            Username
+                                        </label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={username}
+                                            onChange={(e) => setUsername(e.target.value)}
+                                            className="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-green-400 focus:outline-none"
+                                            placeholder="ClimberName"
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2" style={{ color: 'var(--morandi-dark)' }}>
+                                            Bio
+                                        </label>
+                                        <textarea
+                                            required
+                                            value={bio}
+                                            onChange={(e) => setBio(e.target.value)}
+                                            className="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-green-400 focus:outline-none"
+                                            rows="3"
+                                            placeholder="Tell us about your climbing experience..."
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium mb-2" style={{ color: 'var(--morandi-dark)' }}>
+                                            Climbing Preference
+                                        </label>
+                                        <select
+                                            value={profileClimbingPref}
+                                            onChange={(e) => setProfileClimbingPref(e.target.value)}
+                                            className="w-full px-4 py-3 rounded-lg border-2 border-gray-200 focus:border-green-400 focus:outline-none"
+                                        >
+                                            <option value="Top Rope">Top Rope</option>
+                                            <option value="Lead">Lead</option>
+                                            <option value="Open to both">Open to both</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                {error && (
+                                    <p className="mt-4 text-sm text-red-600">{error}</p>
+                                )}
+                                
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="w-full mt-6 py-3 rounded-lg font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50"
+                                    style={{ backgroundColor: 'var(--morandi-green)' }}
+                                >
+                                    {loading ? 'Creating...' : 'Create profile & send request'}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            };
+            
+            // Request Sent Screen
+            const RequestSentScreen = () => (
+                <div className="min-h-screen p-4 fade-in">
+                    <div className="max-w-md mx-auto pt-8">
+                        <div className="bg-white rounded-2xl p-8 shadow-lg text-center">
+                            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" 
+                                style={{ backgroundColor: 'var(--morandi-green)' }}>
+                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            
+                            <h2 className="text-xl font-semibold mb-4" style={{ color: 'var(--morandi-dark)' }}>
+                                Great! We've sent {selectedMatch?.username} your climbing request.
+                            </h2>
+                            
+                            <p style={{ color: 'var(--morandi-gray)' }}>
+                                They have 60 minutes to confirm. We'll notify you once they respond!
+                            </p>
+                            
+                            <button
+                                onClick={() => setCurrentScreen('landing')}
+                                className="mt-6 text-sm font-medium" style={{ color: 'var(--morandi-green)' }}>
+                                Find more partners
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+            
+            // Render current screen
+            const renderScreen = () => {
+                switch (currentScreen) {
+                    case 'landing':
+                        return <LandingScreen />;
+                    case 'timeSelection':
+                        return <TimeSelectionScreen />;
+                    case 'findingMatches':
+                        return <FindingMatchesScreen />;
+                    case 'matchResults':
+                        return <MatchResultsScreen />;
+                    case 'createProfile':
+                        return <CreateProfileScreen />;
+                    case 'requestSent':
+                        return <RequestSentScreen />;
+                    default:
+                        return <LandingScreen />;
+                }
+            };
+            
+            return renderScreen();
+        }
+        
+        // Render the app
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
